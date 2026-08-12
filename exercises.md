@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Câu trả lời sáng tạo, brainstorming hoặc hội thoại không yêu cầu mọi ý phải xuất hiện nguyên văn trong context. | Bài toán factual/high-stakes nhưng answer chứa nhiều claim không được gold context hỗ trợ; đặc biệt nghiêm trọng khi retrieval scores vẫn tốt. | Kiểm tra các claim không grounded; siết prompt yêu cầu chỉ dùng context, thêm citation/grounding guardrail và cơ chế từ chối khi thiếu evidence. |
+| Answer Relevance | Câu hỏi mở cần thêm giải thích nền hoặc ví dụ hữu ích, khiến overlap từ vựng với question thấp dù answer vẫn đúng mục tiêu. | Answer không giải quyết intent chính, trả lời sai chủ đề hoặc bị routing sang domain khác. | Phân tích intent và các case off-topic; cải thiện prompt, query rewriting/routing và bổ sung test theo từng intent. |
+| Context Recall | Câu hỏi có thể trả lời đúng bằng kiến thức ổn định của model, hoặc expected answer chứa chi tiết không cần thiết so với yêu cầu người dùng. | Retriever bỏ sót evidence thiết yếu, đồng thời answer thiếu các ý tương ứng và Completeness thấp. | Kiểm tra corpus/chunking/index; cải thiện query expansion, embedding, top-k và bổ sung tài liệu còn thiếu. |
+| Context Precision | Evidence đúng vẫn nằm trong top-k nhưng đứng sau vài chunk nhiễu, trong khi latency và answer quality vẫn đạt yêu cầu. | Phần lớn top-ranked chunks không liên quan, evidence đúng bị đẩy xuống thấp hoặc context window bị noise chiếm hết. | Cải thiện retriever filters và ranking; dùng hybrid search/reranker, điều chỉnh top-k và đo AP@K sau khi rerank. |
+| Completeness | Người dùng yêu cầu câu trả lời ngắn/tóm tắt, hoặc expected answer có các chi tiết tùy chọn không cần cho task completion. | Answer bỏ sót các ý bắt buộc, bước an toàn hoặc điều kiện quan trọng; nếu Context Recall cũng thấp thì thường là lỗi retrieval. | So sánh các ý thiếu với retrieved contexts: nếu evidence thiếu thì sửa retrieval; nếu evidence đã có thì sửa generation prompt/checklist. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -48,13 +48,40 @@ Ba bias thường gặp:
 
 > *Câu trả lời:*
 
+Chuẩn bị nhiều cặp answer A/B có chất lượng tương đương hoặc đã được human
+label. Chạy ít nhất hai conditions với cùng question, rubric, judge model và
+sampling settings:
+
+1. Condition 1: trình bày A trước B.
+2. Condition 2: đảo thứ tự, trình bày B trước A.
+
+Lặp lại trên đủ nhiều cặp và randomize thứ tự giữa các mẫu. So sánh win-rate và
+độ lệch score của cùng một answer khi đứng vị trí đầu với khi đứng vị trí sau.
+Nếu answer ở vị trí đầu thắng hoặc được tăng điểm một cách có ý nghĩa thống kê,
+bất kể nội dung là A hay B, đó là bằng chứng của position bias. Có thể thêm một
+condition chấm riêng từng answer để tạo baseline không phụ thuộc thứ tự.
+
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
 
+Rubric phải nói rõ rằng độ dài tự nó không phải là tiêu chí chất lượng; judge chỉ
+chấm mức độ đúng, liên quan, đầy đủ và súc tích. Mỗi criterion cần mô tả bằng
+evidence quan sát được, có thang điểm với anchor cụ thể, đồng thời trừ điểm cho
+lặp ý, lan man và thông tin không phục vụ câu hỏi. Có thể yêu cầu judge liệt kê
+các claim/ý bắt buộc được đáp ứng trước khi cho điểm, nhờ đó một answer ngắn nhưng
+đủ ý không bị thua chỉ vì ít từ hơn.
+
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+
+Human labels cung cấp chuẩn tham chiếu để biết judge có thật sự đo đúng chất
+lượng mong muốn hay chỉ tạo score có vẻ hợp lý. Đối chiếu judge với nhiều người
+gán nhãn giúp đo agreement, phát hiện systematic bias, threshold sai và rubric
+mơ hồ. Từ các case bất đồng, ta hiệu chỉnh rubric, prompt, score anchors và
+deployment threshold. Việc calibration nên được lặp lại khi đổi domain, model
+hoặc phân phối dữ liệu; các case high-stakes và bất đồng lớn cần human review.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +89,31 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | >= 0.80 | Claim không grounded tạo rủi ro hallucination, nên đây là gate nghiêm ngặt; dưới 0.80 phải phân tích và dưới 0.60 phải block tuyệt đối. |
+| Answer Relevance | >= 0.75 | Cho phép một ít nội dung nền hữu ích nhưng vẫn yêu cầu answer giải quyết trực tiếp intent của người dùng. |
+| Completeness | >= 0.75 | Cho phép cách diễn đạt ngắn gọn, nhưng bảo đảm phần lớn ý bắt buộc trong expected answer được bao phủ. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+
+- **Offline evaluation:** chạy trên golden dataset trước mỗi release và khi đổi
+  prompt, model, retriever hoặc code. Nó lặp lại được, phù hợp regression test và
+  là quality gate tự động trong CI/CD. Deployment bị block nếu metric trung bình
+  dưới threshold, có regression đáng kể, hoặc case critical/high-stakes thất bại.
+- **Online evaluation:** chạy liên tục trên traffic thật sau deployment để phát
+  hiện data drift, intent mới, latency/cost bất thường và lỗi chỉ xuất hiện trong
+  môi trường production. Dùng sampling, tracing và cảnh báo; không dựa duy nhất
+  vào online score để tự động thay đổi hệ thống high-stakes.
+- **Human review:** dùng để xây dựng/calibrate golden labels, xử lý case mơ hồ,
+  bất đồng giữa evaluators và các quyết định high-stakes. Human feedback cũng
+  được đưa trở lại offline dataset cho vòng lặp cải tiến tiếp theo.
+
+Khi **Context Recall thấp và Completeness thấp**, retriever thường không lấy đủ
+evidence nên generator không có dữ liệu để bao phủ expected answer. Ngược lại,
+nếu Context Recall/Precision tốt nhưng **Faithfulness thấp**, evidence cần thiết
+đã được retrieval cung cấp mà answer vẫn tạo claim không grounded; root cause
+thường nằm ở generation prompt, model hoặc grounding guardrail.
 
 ---
 
