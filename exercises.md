@@ -336,19 +336,34 @@ prompt/rubric cố định và log rationale để kết quả có thể lặp l
 Chỉ làm sau khi hoàn thành 3.1–3.3. Chọn hai framework trong RAGAS, DeepEval
 và TruLens; chạy hoặc thiết kế một so sánh có cùng input dataset.
 
-| Tiêu chí | Framework 1: ____ | Framework 2: ____ |
+| Tiêu chí | Framework 1: RAGAS | Framework 2: DeepEval |
 |---|---|---|
-| Setup complexity | | |
-| Metrics available | | |
-| CI/CD integration | | |
-| Kết quả trên cùng dataset | | |
-| Insight rút ra | | |
+| Setup complexity | Chuyển 20 records thành `EvaluationDataset`/samples với `user_input`, `response`, `retrieved_contexts` và `reference`; cấu hình evaluator LLM và embeddings. Phù hợp chạy batch dataframe/report. | Chuyển mỗi record thành `LLMTestCase` với input, actual output, expected output và retrieval context; khai báo metric/threshold. Setup test nhiều boilerplate hơn nhưng gần unit test. |
+| Metrics available | Tập trung RAG: Faithfulness, Answer Relevancy, Context Recall, Context Precision và factual/correctness metrics. | Answer Relevancy, Faithfulness, Contextual Recall/Precision/Relevancy, Hallucination, GEval và custom metrics. |
+| CI/CD integration | Có thể gọi `evaluate()` trong job CI rồi tự kiểm threshold và lưu report; cần viết lớp quality-gate bao quanh kết quả. | Pytest-native: dùng `assert_test()`/parametrized cases và `deepeval test run`, nên failure hiện trực tiếp như test regression trong CI. |
+| Kết quả trên cùng dataset | Thiết kế chạy cùng 20 recorded answers/chunks, cùng judge model, temperature 0 và tối thiểu 3 repetitions. So sánh macro average và bottom-3 IDs. Baseline lexical hiện tại: Faithfulness 0.529, Relevance 0.635, Context Recall 0.845, Context Precision 0.938. Chưa chạy RAGAS thật nên không báo score giả. | Dùng chính input, judge và repetitions bên trái; threshold 0.5 trên từng metric. Đối chiếu failure set với E05, A02, M02 và baseline pass rate 30%. Chưa chạy DeepEval thật nên kết quả là protocol thiết kế, không phải measured score. |
+| Insight rút ra | Phù hợp phân tích RAG theo từng stage và aggregate experiment. | Phù hợp biến behavior/threshold thành regression tests chặn PR; GEval/custom rubric hữu ích cho safety cases như A02. |
 
 - Scores có nhất quán không?
 - Framework nào strict hơn và vì sao?
 - Hai framework có tìm ra cùng failure cases không?
 
 > *Phân tích:*
+
+Đây là **designed comparison** được phép bởi yêu cầu bài, chưa phải một lần chạy
+hai package; vì vậy chỉ baseline lexical của lab được báo bằng số. Để so sánh
+công bằng, hai framework phải nhận cùng 20 question/answer/context/reference,
+cùng judge model, prompt version và temperature, rồi chạy ít nhất ba lần để giảm
+variance. Chuẩn hóa score về [0,1], so sánh Spearman correlation, mean absolute
+difference, pass/fail agreement và overlap của bottom-3 failures.
+
+Không thể kết luận framework nào strict hơn trước khi chạy. Giả thuyết là cả hai
+sẽ cùng phát hiện E05 vì output hoàn toàn sai dạng và M02 vì có unsupported
+claims; A02 có thể bất đồng vì refusal an toàn nhưng lexical overlap thấp. RAGAS
+có lợi thế chẩn đoán retrieval/generation theo các RAG metrics, còn DeepEval có
+lợi thế CI/CD nhờ assertions và custom safety rubric. Nếu một framework cho điểm
+thấp hơn có hệ thống, cần xem rationale và calibration với human labels thay vì
+mặc định coi framework đó chính xác hơn.
 
 ### Exercise 3.5 — Retrieval Reranking (Bonus +5)
 
@@ -363,20 +378,33 @@ thay đổi Context Recall hay không.
 
 | ID | Recall before | Recall after | Precision before | Precision after | Delta Precision |
 |---|---:|---:|---:|---:|---:|
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| | | | | | |
-| **Avg** | | | | | |
+| E05 | 1.000 | 1.000 | 0.833 | 1.000 | +0.167 |
+| A02 | 0.600 | 0.600 | 0.867 | 1.000 | +0.133 |
+| H04 | 1.000 | 1.000 | 0.887 | 1.000 | +0.113 |
+| H03 | 0.643 | 0.643 | 0.804 | 0.887 | +0.083 |
+| M05 | 1.000 | 1.000 | 0.867 | 0.867 | +0.000 |
+| **Avg** | **0.849** | **0.849** | **0.852** | **0.951** | **+0.099** |
 
 **Tại sao Recall dự kiến không đổi?**
 
 > *Câu trả lời:*
 
+Context Recall dùng union token của toàn bộ retrieved chunks. Reranking chỉ đổi
+thứ tự, không thêm hoặc xóa chunk, nên union và phần expected evidence được cover
+không đổi. Thực nghiệm xác nhận Recall before = Recall after cho cả năm traces.
+
 **Khi nào reranking không đủ và cần sửa retriever/query/chunking?**
 
 > *Câu trả lời:*
+
+Reranking không đủ khi evidence cần thiết chưa nằm trong retrieved set: ví dụ
+A02 chỉ có Recall 0.600 và H03 chỉ có 0.643 cả trước lẫn sau. Khi đó phải query
+rewrite/decompose, tăng hoặc điều chỉnh top-k, dùng hybrid/semantic retriever,
+sửa chunk boundaries hoặc bổ sung corpus/index. Lexical overlap reranker cũng
+không bảo đảm luôn tốt hơn: trên toàn bộ 20 traces, M01 giảm Precision từ 1.000
+xuống 0.887 vì question overlap không hoàn toàn tương ứng với gold relevance.
+Do đó cần đánh giá trên toàn benchmark và dùng cross-encoder/semantic reranker
+nếu lexical ordering làm giảm metric ở một nhóm query.
 
 ---
 
