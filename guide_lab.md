@@ -553,9 +553,10 @@ sinh actual answers và làm Exercise 3.2.
 
 ---
 
-## 7. Cấu hình OpenAI API
+## 7. Cấu hình OpenRouter hoặc OpenAI API
 
-Chỉ `domain_assistant.py` cần API key.
+Chỉ `domain_assistant.py` cần API key. OpenRouter được ưu tiên khi cả hai key
+cùng tồn tại và có thể dùng free-model router cho bài lab.
 
 macOS/Linux:
 
@@ -569,7 +570,14 @@ Windows PowerShell:
 Copy-Item .env.example .env
 ```
 
-Mở `.env` và điền:
+Mở `.env` và điền một trong hai cấu hình. OpenRouter (khuyến nghị cho lab):
+
+```dotenv
+OPENROUTER_API_KEY=<OPENROUTER_KEY_CUA_BAN>
+OPENROUTER_MODEL=openrouter/free
+```
+
+Hoặc OpenAI:
 
 ```dotenv
 OPENAI_API_KEY=<API_KEY_CUA_BAN>

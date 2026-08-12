@@ -243,27 +243,51 @@ class TextGenerator(Protocol):
 
 
 class OpenAIGenerator:
-    def __init__(self, max_output_tokens: int = 300) -> None:
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.model = os.getenv("OPENAI_MODEL", "").strip()
+    def __init__(self, max_output_tokens: int = 600, max_empty_retries: int = 2) -> None:
+        openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+        openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = openrouter_key or openai_key
+        self.provider = "openrouter" if openrouter_key else "openai"
+        self.model = (
+            os.getenv("OPENROUTER_MODEL", "openrouter/free").strip()
+            if openrouter_key
+            else os.getenv("OPENAI_MODEL", "").strip()
+        )
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is missing from .env")
+            raise RuntimeError(
+                "OPENROUTER_API_KEY or OPENAI_API_KEY is missing from .env"
+            )
         if not self.model:
-            raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+            raise RuntimeError(f"{self.provider.upper()} model is missing from .env")
+
+        client_options: dict[str, Any] = {"api_key": api_key}
+        if self.provider == "openrouter":
+            client_options["base_url"] = "https://openrouter.ai/api/v1"
+            client_options["default_headers"] = {
+                "HTTP-Referer": "https://github.com/anhkhiem142-sudo/K3_Day14_AI_Evaluation",
+                "X-OpenRouter-Title": "K3 Day 14 AI Evaluation Lab",
+            }
+        self.client = OpenAI(**client_options)
         self.max_output_tokens = max_output_tokens
+        self.max_empty_retries = max_empty_retries
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            temperature=0,
-            max_output_tokens=self.max_output_tokens,
+        for attempt in range(self.max_empty_retries + 1):
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=self.max_output_tokens,
+            )
+            answer = (response.choices[0].message.content or "").strip()
+            if answer:
+                return answer
+            if attempt < self.max_empty_retries:
+                time.sleep(attempt + 1)
+        raise RuntimeError(
+            f"{self.provider.title()} returned an empty answer after "
+            f"{self.max_empty_retries + 1} attempts"
         )
-        answer = response.output_text.strip()
-        if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
-        return answer
 
 
 @dataclass(frozen=True)
